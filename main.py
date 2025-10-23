@@ -1,9 +1,9 @@
-# main.py (v1.1 - Com endpoint /resumo-do-dia/)
+# main.py (v1.2 - Com CORS habilitado)
 
 import os
 import sys
 import urllib.parse
-from datetime import datetime, date, time, timedelta # date e time adicionados
+from datetime import datetime, date, time, timedelta
 import json
 import logging
 
@@ -12,7 +12,7 @@ import google.generativeai as genai
 import requests
 import sqlalchemy
 from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware # <-- Import para CORS
 from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
                         create_engine, func)
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
@@ -155,17 +155,6 @@ Sua resposta:
     "unidade": "grama"
   }}
 ]
-Exemplo 3: 
-Frase do usuario: "500g de feijao e 1 colher de mel
-  {{
-    "alimento": "beans",
-    "quantidade": 500,
-    "unidade": "grama"
-  }}
-  {{
-    "alimento": "honey"
-    "quantidade": 18
-    "unidade": "grama"
 
 Agora, analise a seguinte frase:
 "{frase_do_usuario}"
@@ -261,7 +250,6 @@ class RefeicaoOutput(BaseModel):
      total_gorduras: float = 0
      total_carboidratos: float = 0
 
-# --- NOVO MODELO DE SAÍDA ---
 class ResumoDiaOutput(BaseModel):
     data: date
     meta_calorias: float
@@ -274,22 +262,20 @@ class ResumoDiaOutput(BaseModel):
 # --- 6. INICIALIZAÇÃO DO FASTAPI ---
 logger.info("Iniciando FastAPI app...")
 app = FastAPI(title="API de Nutrição com IA")
-# --- CONFIGURAÇÃO DO CORS ---
-# Permite que qualquer origem (como o StackBlitz) acesse nossa API.
-# Em produção, seria ideal restringir para os domínios específicos do seu front-end.
-origins = ["*"] # Permite TUDO por enquanto
+
+# --- BLOCO CORS ADICIONADO AQUI ---
+origins = ["*"] # Permite TUDO por enquanto (Idealmente restringir em produção)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True, # Permite cookies (não usamos ainda, mas bom ter)
-    allow_methods=["*"],    # Permite todos os métodos (GET, POST, etc.)
-    allow_headers=["*"],    # Permite todos os cabeçalhos
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 logger.info("✅ Middleware CORS configurado para permitir todas as origens.")
-# -------------------------
+# --- FIM DO BLOCO CORS ---
 
-logger.info("✅ FastAPI app iniciado.") # Esta linha já existia
 logger.info("✅ FastAPI app iniciado.")
 
 # --- 7. ENDPOINTS DA API ---
@@ -342,31 +328,21 @@ async def registrar_refeicao(refeicao_input: RefeicaoInput, db: Session = Depend
         db.rollback()
         raise HTTPException(status_code=500, detail="Erro interno ao salvar a refeição.")
 
-# --- NOVO ENDPOINT ---
 @app.get("/resumo-do-dia/", response_model=ResumoDiaOutput)
 async def get_resumo_do_dia(db: Session = Depends(get_db)):
-    """
-    Calcula e retorna o resumo nutricional total para o dia atual (UTC)
-    para o usuário de teste.
-    """
+    # (Código do endpoint como antes)
     logger.info(f"Recebido pedido para obter resumo do dia para usuário ID: {TEST_USER_ID}")
-
     try:
-        # 1. Pega a meta do usuário
         usuario_teste = db.query(Usuario).filter(Usuario.id == TEST_USER_ID).first()
         if not usuario_teste:
             logger.error(f"Usuário de teste com ID {TEST_USER_ID} não encontrado no banco.")
             raise HTTPException(status_code=404, detail="Usuário de teste não encontrado.")
         meta_calorias = usuario_teste.meta_calorias
         logger.info(f"Meta de calorias do usuário: {meta_calorias} Kcal")
-
-        # 2. Define o intervalo de "hoje" (em UTC, como os dados são salvos)
         hoje_utc = datetime.utcnow().date()
-        inicio_do_dia_utc = datetime.combine(hoje_utc, time.min) # 00:00:00 UTC
-        fim_do_dia_utc = inicio_do_dia_utc + timedelta(days=1)   # Próximo dia 00:00:00 UTC
+        inicio_do_dia_utc = datetime.combine(hoje_utc, time.min)
+        fim_do_dia_utc = inicio_do_dia_utc + timedelta(days=1)
         logger.info(f"Buscando registros entre {inicio_do_dia_utc} e {fim_do_dia_utc} (UTC)...")
-
-        # 3. Faz a consulta de agregação no banco
         resumo_query = db.query(
             func.sum(RefeicaoRegistrada.total_calorias).label("total_cal"),
             func.sum(RefeicaoRegistrada.total_proteinas).label("total_prot"),
@@ -377,27 +353,18 @@ async def get_resumo_do_dia(db: Session = Depends(get_db)):
             RefeicaoRegistrada.data >= inicio_do_dia_utc,
             RefeicaoRegistrada.data < fim_do_dia_utc
         ).first()
-
-        # 4. Processa os resultados
         total_cal = resumo_query.total_cal or 0
         total_prot = resumo_query.total_prot or 0
         total_gord = resumo_query.total_gord or 0
         total_carb = resumo_query.total_carb or 0
         calorias_restantes = meta_calorias - total_cal
-
         logger.info(f"Resumo do dia calculado: Cal={total_cal}, Prot={total_prot}, Gord={total_gord}, Carb={total_carb}")
-
-        # 5. Retorna o resultado
         return ResumoDiaOutput(
-            data=hoje_utc,
-            meta_calorias=meta_calorias,
-            total_calorias=round(total_cal, 2),
-            total_proteinas=round(total_prot, 2),
-            total_gorduras=round(total_gord, 2),
-            total_carboidratos=round(total_carb, 2),
+            data=hoje_utc, meta_calorias=meta_calorias,
+            total_calorias=round(total_cal, 2), total_proteinas=round(total_prot, 2),
+            total_gorduras=round(total_gord, 2), total_carboidratos=round(total_carb, 2),
             calorias_restantes=round(calorias_restantes, 2)
         )
-
     except Exception as e:
         logger.exception("Ocorreu um erro ao calcular o resumo do dia.")
         raise HTTPException(status_code=500, detail="Erro interno ao calcular o resumo do dia.")
