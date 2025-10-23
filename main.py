@@ -109,7 +109,7 @@ try:
         "max_output_tokens": 2048, "response_mime_type": "application/json",
     }
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro-latest",
+        model_name="gemini-2.5-pro",
         generation_config=generation_config
     )
     prompt_template = """
