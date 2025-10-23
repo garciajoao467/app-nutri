@@ -12,6 +12,7 @@ import google.generativeai as genai
 import requests
 import sqlalchemy
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
                         create_engine, func)
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
@@ -273,6 +274,22 @@ class ResumoDiaOutput(BaseModel):
 # --- 6. INICIALIZAÇÃO DO FASTAPI ---
 logger.info("Iniciando FastAPI app...")
 app = FastAPI(title="API de Nutrição com IA")
+# --- CONFIGURAÇÃO DO CORS ---
+# Permite que qualquer origem (como o StackBlitz) acesse nossa API.
+# Em produção, seria ideal restringir para os domínios específicos do seu front-end.
+origins = ["*"] # Permite TUDO por enquanto
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True, # Permite cookies (não usamos ainda, mas bom ter)
+    allow_methods=["*"],    # Permite todos os métodos (GET, POST, etc.)
+    allow_headers=["*"],    # Permite todos os cabeçalhos
+)
+logger.info("✅ Middleware CORS configurado para permitir todas as origens.")
+# -------------------------
+
+logger.info("✅ FastAPI app iniciado.") # Esta linha já existia
 logger.info("✅ FastAPI app iniciado.")
 
 # --- 7. ENDPOINTS DA API ---
