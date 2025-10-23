@@ -154,6 +154,17 @@ Sua resposta:
     "unidade": "grama"
   }}
 ]
+Exemplo 3: 
+Frase do usuario: "500g de feijao e 1 colher de mel
+  {{
+    "alimento": "beans",
+    "quantidade": 500,
+    "unidade": "grama"
+  }}
+  {{
+    "alimento": "honey"
+    "quantidade": 18
+    "unidade": "grama"
 
 Agora, analise a seguinte frase:
 "{frase_do_usuario}"
