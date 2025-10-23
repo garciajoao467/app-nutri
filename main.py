@@ -8,7 +8,6 @@ import google.generativeai as genai
 import requests
 import sqlalchemy
 from fastapi import FastAPI, HTTPException
-from google.colab import userdata # Temporário, vamos substituir por os.getenv
 from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
                         create_engine, func)
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
