@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+google-generativeai
+requests
+bcrypt
+python-dotenv
+urllib3
