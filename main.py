@@ -12,6 +12,46 @@ from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
                         create_engine, func)
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from dotenv import load_dotenv # Para carregar variáveis de ambiente (secrets)
+print("DEBUG: Script main.py iniciado.")
+print(f"DEBUG: Tentando carregar dotenv...")
+# -----------------------------
+
+# Carrega variáveis do arquivo .env (se existir) e do ambiente do Railway
+load_dotenv()
+
+# ---- MAIS LINHAS DE DEBUG ----
+print("DEBUG: dotenv carregado (ou não encontrado, o que é normal no deploy).")
+print("DEBUG: Tentando carregar secrets do ambiente...")
+# -----------------------------
+
+# --- 1. CONFIGURAÇÃO INICIAL E SECRETS ---
+# print("Carregando configurações...") # Comentado para não poluir
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+# ... (resto do carregamento dos secrets) ...
+
+# ---- MAIS LINHAS DE DEBUG ----
+print(f"DEBUG: GEMINI_API_KEY carregado? {'Sim' if GEMINI_API_KEY else 'NÃO'}")
+print(f"DEBUG: USDA_API_KEY carregado? {'Sim' if USDA_API_KEY else 'NÃO'}")
+print(f"DEBUG: DB_PASSWORD carregado? {'Sim' if DB_PASSWORD else 'NÃO'}")
+print(f"DEBUG: DB_CONNECTION_TEMPLATE carregado? {'Sim' if DB_CONNECTION_TEMPLATE else 'NÃO'}")
+# -----------------------------
+
+# Validação inicial dos secrets
+if not all([GEMINI_API_KEY, USDA_API_KEY, DB_PASSWORD, DB_CONNECTION_TEMPLATE]):
+    # ---- DEBUG MAIS VERBOSO NO ERRO ----
+    missing = [k for k,v in {
+        'GEMINI_API_KEY': GEMINI_API_KEY, 
+        'USDA_API_KEY': USDA_API_KEY, 
+        'DB_PASSWORD': DB_PASSWORD, 
+        'DB_CONNECTION_TEMPLATE': DB_CONNECTION_TEMPLATE
+    }.items() if not v]
+    error_msg = f"ERRO CRÍTICO: Secrets ausentes: {', '.join(missing)}. Verifique as 'Variables' no Railway."
+    print(error_msg) # Imprime antes de sair
+    sys.exit(error_msg)
+    # ------------------------------------
+
+print("DEBUG: Todos os secrets essenciais parecem estar carregados.")
 
 # Carrega variáveis do arquivo .env (se existir) e do ambiente do Railway
 load_dotenv()
