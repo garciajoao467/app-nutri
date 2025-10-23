@@ -1,20 +1,22 @@
+# main.py (v1.1 - Com endpoint /resumo-do-dia/)
+
 import os
 import sys
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, date, time, timedelta # date e time adicionados
 import json
-import logging # Para logs mais detalhados
+import logging
 
 import bcrypt
 import google.generativeai as genai
 import requests
 import sqlalchemy
-from fastapi import FastAPI, HTTPException, Depends # Depends adicionado
+from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, String,
                         create_engine, func)
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session # Session adicionado
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
 from dotenv import load_dotenv
-from pydantic import BaseModel # Para definir modelos de dados de entrada
+from pydantic import BaseModel
 
 # Configuração básica de logging
 logging.basicConfig(level=logging.INFO)
@@ -68,7 +70,6 @@ try:
         pool_size=1,
         max_overflow=0
     )
-    # Testa a conexão
     with engine.connect() as connection:
         logger.info("✅ Conexão inicial com o banco de dados bem-sucedida!")
 
@@ -109,7 +110,7 @@ try:
         "max_output_tokens": 2048, "response_mime_type": "application/json",
     }
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-pro",
+        model_name="gemini-2.5-pro", # Ou o modelo que funcionou para você
         generation_config=generation_config
     )
     prompt_template = """
@@ -164,6 +165,7 @@ except Exception as e:
 
 # --- 4. FUNÇÕES DE LÓGICA (DO COLAB) ---
 def extrair_alimentos_da_frase(frase: str):
+    # (Código da função como antes)
     logger.info(f"1. Processando com Gemini: '{frase}'")
     if not frase: return None
     prompt_completo = prompt_template.format(frase_do_usuario=frase)
@@ -185,43 +187,28 @@ def extrair_alimentos_da_frase(frase: str):
         logger.exception(f"Ocorreu um erro ao chamar a API do Gemini: {e}")
         return None
 
-# ----- FUNÇÃO CORRIGIDA -----
 def buscar_dados_nutricionais(item: dict, usda_key: str):
+    # (Código da função como antes, com o try/except corrigido)
     alimento_nome = item.get('alimento')
     quantidade = item.get('quantidade')
     unidade = item.get('unidade')
-
-    if not all([alimento_nome, quantidade, unidade]):
-         logger.warning(f"Item inválido para busca no USDA: {item}")
-         return None
-
+    if not all([alimento_nome, quantidade, unidade]): return None
     logger.info(f"2. Buscando dados de '{alimento_nome}' no USDA...")
     url = f"https://api.nal.usda.gov/fdc/v1/foods/search?api_key={usda_key}&query={alimento_nome}"
-
-    try: # Bloco try começa aqui
+    try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-
         data = response.json()
         if data['foods']:
             primeiro_alimento = data['foods'][0]
             valores_base_100g = {}
             for nut in primeiro_alimento.get('foodNutrients', []):
-                name = nut.get('nutrientName')
-                unit = nut.get('unitName', '').upper()
-                value = nut.get('value', 0)
-
-                if name == 'Energy' and unit == 'KCAL':
-                    valores_base_100g['Calorias (Kcal)'] = value
-                elif name == 'Protein' and unit == 'G':
-                     valores_base_100g['Proteínas (g)'] = value
-                elif name == 'Total lipid (fat)' and unit == 'G':
-                     valores_base_100g['Gorduras (g)'] = value
-                elif name == 'Carbohydrate, by difference' and unit == 'G':
-                     valores_base_100g['Carboidratos (g)'] = value
-
+                name = nut.get('nutrientName'); unit = nut.get('unitName', '').upper(); value = nut.get('value', 0)
+                if name == 'Energy' and unit == 'KCAL': valores_base_100g['Calorias (Kcal)'] = value
+                elif name == 'Protein' and unit == 'G': valores_base_100g['Proteínas (g)'] = value
+                elif name == 'Total lipid (fat)' and unit == 'G': valores_base_100g['Gorduras (g)'] = value
+                elif name == 'Carbohydrate, by difference' and unit == 'G': valores_base_100g['Carboidratos (g)'] = value
             logger.info(f"   -> Encontrado: '{primeiro_alimento.get('description')}' (Base 100g)")
-
             if unidade == 'grama':
                 if quantidade <= 0: return None
                 logger.info(f"   -> Calculando para {quantidade} gramas...")
@@ -234,15 +221,12 @@ def buscar_dados_nutricionais(item: dict, usda_key: str):
         else:
             logger.warning(f"   -> Alimento '{alimento_nome}' não encontrado no USDA.")
             return None
-    # ---- Bloco except CORRIGIDO ----
-    except requests.exceptions.RequestException as e: # Captura erros de rede
+    except requests.exceptions.RequestException as e:
          logger.error(f"Erro de rede ao chamar API do USDA: {e}")
          return None
-    except Exception as e: # Captura outros erros inesperados
+    except Exception as e:
         logger.exception(f"Ocorreu um erro inesperado ao buscar dados no USDA: {e}")
         return None
-    # -------------------------------
-# ----- FIM DA FUNÇÃO CORRIGIDA -----
 
 # --- FUNÇÃO PARA PEGAR SESSÃO DO BANCO ---
 def get_db():
@@ -265,6 +249,16 @@ class RefeicaoOutput(BaseModel):
      total_gorduras: float = 0
      total_carboidratos: float = 0
 
+# --- NOVO MODELO DE SAÍDA ---
+class ResumoDiaOutput(BaseModel):
+    data: date
+    meta_calorias: float
+    total_calorias: float = 0
+    total_proteinas: float = 0
+    total_gorduras: float = 0
+    total_carboidratos: float = 0
+    calorias_restantes: float = 0
+
 # --- 6. INICIALIZAÇÃO DO FASTAPI ---
 logger.info("Iniciando FastAPI app...")
 app = FastAPI(title="API de Nutrição com IA")
@@ -279,15 +273,12 @@ async def root():
 
 @app.post("/registrar-refeicao/", response_model=RefeicaoOutput)
 async def registrar_refeicao(refeicao_input: RefeicaoInput, db: Session = Depends(get_db)):
+    # (Código do endpoint como antes)
     logger.info(f"Recebido pedido para registrar: {refeicao_input.tipo_refeicao} - '{refeicao_input.frase_refeicao}'")
-
-    # 1. Extrair alimentos com Gemini
     dados_alimentos = extrair_alimentos_da_frase(refeicao_input.frase_refeicao)
     if not dados_alimentos:
         logger.error("Falha ao extrair alimentos com Gemini.")
         raise HTTPException(status_code=400, detail="Não foi possível processar a descrição da refeição com a IA.")
-
-    # 2. Buscar dados nutricionais e calcular totais
     total_calorias, total_proteinas, total_gorduras, total_carboidratos = 0, 0, 0, 0
     itens_processados = 0
     for item in dados_alimentos:
@@ -298,42 +289,87 @@ async def registrar_refeicao(refeicao_input: RefeicaoInput, db: Session = Depend
             total_proteinas += nutrientes.get('Proteínas (g)', 0)
             total_gorduras += nutrientes.get('Gorduras (g)', 0)
             total_carboidratos += nutrientes.get('Carboidratos (g)', 0)
-
     if itens_processados == 0:
          logger.error("Nenhum item da refeição pôde ser encontrado no USDA.")
          raise HTTPException(status_code=404, detail="Nenhum dos alimentos descritos foi encontrado no banco de dados nutricional.")
-
     logger.info(f"Refeição calculada: Cal={total_calorias}, Prot={total_proteinas}, Gord={total_gorduras}, Carb={total_carboidratos}")
-
-    # 3. Salvar no banco de dados
     try:
         nova_refeicao_db = RefeicaoRegistrada(
-            data=datetime.utcnow(),
-            tipo_refeicao=refeicao_input.tipo_refeicao,
-            total_calorias=round(total_calorias, 2),
-            total_proteinas=round(total_proteinas, 2),
-            total_gorduras=round(total_gorduras, 2),
-            total_carboidratos=round(total_carboidratos, 2),
+            data=datetime.utcnow(), tipo_refeicao=refeicao_input.tipo_refeicao,
+            total_calorias=round(total_calorias, 2), total_proteinas=round(total_proteinas, 2),
+            total_gorduras=round(total_gorduras, 2), total_carboidratos=round(total_carboidratos, 2),
             usuario_id=TEST_USER_ID
         )
         db.add(nova_refeicao_db)
         db.commit()
         db.refresh(nova_refeicao_db)
-
         logger.info(f"✅ Refeição salva no banco com ID: {nova_refeicao_db.id}")
-
         return RefeicaoOutput(
-            id=nova_refeicao_db.id,
-            mensagem="Refeição registrada com sucesso!",
-            total_calorias=nova_refeicao_db.total_calorias,
-            total_proteinas=nova_refeicao_db.total_proteinas,
-            total_gorduras=nova_refeicao_db.total_gorduras,
-            total_carboidratos=nova_refeicao_db.total_carboidratos
+            id=nova_refeicao_db.id, mensagem="Refeição registrada com sucesso!",
+            total_calorias=nova_refeicao_db.total_calorias, total_proteinas=nova_refeicao_db.total_proteinas,
+            total_gorduras=nova_refeicao_db.total_gorduras, total_carboidratos=nova_refeicao_db.total_carboidratos
         )
-
     except Exception as e:
         logger.exception("Ocorreu um erro ao salvar a refeição no banco de dados.")
         db.rollback()
         raise HTTPException(status_code=500, detail="Erro interno ao salvar a refeição.")
 
-# --- (PRÓXIMO PASSO: Adicionar endpoint /resumo-do-dia aqui) ---
+# --- NOVO ENDPOINT ---
+@app.get("/resumo-do-dia/", response_model=ResumoDiaOutput)
+async def get_resumo_do_dia(db: Session = Depends(get_db)):
+    """
+    Calcula e retorna o resumo nutricional total para o dia atual (UTC)
+    para o usuário de teste.
+    """
+    logger.info(f"Recebido pedido para obter resumo do dia para usuário ID: {TEST_USER_ID}")
+
+    try:
+        # 1. Pega a meta do usuário
+        usuario_teste = db.query(Usuario).filter(Usuario.id == TEST_USER_ID).first()
+        if not usuario_teste:
+            logger.error(f"Usuário de teste com ID {TEST_USER_ID} não encontrado no banco.")
+            raise HTTPException(status_code=404, detail="Usuário de teste não encontrado.")
+        meta_calorias = usuario_teste.meta_calorias
+        logger.info(f"Meta de calorias do usuário: {meta_calorias} Kcal")
+
+        # 2. Define o intervalo de "hoje" (em UTC, como os dados são salvos)
+        hoje_utc = datetime.utcnow().date()
+        inicio_do_dia_utc = datetime.combine(hoje_utc, time.min) # 00:00:00 UTC
+        fim_do_dia_utc = inicio_do_dia_utc + timedelta(days=1)   # Próximo dia 00:00:00 UTC
+        logger.info(f"Buscando registros entre {inicio_do_dia_utc} e {fim_do_dia_utc} (UTC)...")
+
+        # 3. Faz a consulta de agregação no banco
+        resumo_query = db.query(
+            func.sum(RefeicaoRegistrada.total_calorias).label("total_cal"),
+            func.sum(RefeicaoRegistrada.total_proteinas).label("total_prot"),
+            func.sum(RefeicaoRegistrada.total_gorduras).label("total_gord"),
+            func.sum(RefeicaoRegistrada.total_carboidratos).label("total_carb")
+        ).filter(
+            RefeicaoRegistrada.usuario_id == TEST_USER_ID,
+            RefeicaoRegistrada.data >= inicio_do_dia_utc,
+            RefeicaoRegistrada.data < fim_do_dia_utc
+        ).first()
+
+        # 4. Processa os resultados
+        total_cal = resumo_query.total_cal or 0
+        total_prot = resumo_query.total_prot or 0
+        total_gord = resumo_query.total_gord or 0
+        total_carb = resumo_query.total_carb or 0
+        calorias_restantes = meta_calorias - total_cal
+
+        logger.info(f"Resumo do dia calculado: Cal={total_cal}, Prot={total_prot}, Gord={total_gord}, Carb={total_carb}")
+
+        # 5. Retorna o resultado
+        return ResumoDiaOutput(
+            data=hoje_utc,
+            meta_calorias=meta_calorias,
+            total_calorias=round(total_cal, 2),
+            total_proteinas=round(total_prot, 2),
+            total_gorduras=round(total_gord, 2),
+            total_carboidratos=round(total_carb, 2),
+            calorias_restantes=round(calorias_restantes, 2)
+        )
+
+    except Exception as e:
+        logger.exception("Ocorreu um erro ao calcular o resumo do dia.")
+        raise HTTPException(status_code=500, detail="Erro interno ao calcular o resumo do dia.")
