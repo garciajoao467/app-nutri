@@ -168,4 +168,172 @@ def extrair_alimentos_da_frase(frase: str):
     if not frase: return None
     prompt_completo = prompt_template.format(frase_do_usuario=frase)
     try:
-        response
+        response = model.generate_content(prompt_completo)
+        alimentos = json.loads(response.text)
+        if not isinstance(alimentos, list):
+            logger.error(f"Resposta inesperada do Gemini (não é lista): {alimentos}")
+            return None
+        for item in alimentos:
+             if not all(key in item for key in ["alimento", "quantidade", "unidade"]):
+                  logger.error(f"Item inválido na resposta do Gemini: {item}")
+                  return None
+        return alimentos
+    except json.JSONDecodeError as e:
+         logger.error(f"Erro ao decodificar JSON do Gemini: {e}. Resposta: {response.text}")
+         return None
+    except Exception as e:
+        logger.exception(f"Ocorreu um erro ao chamar a API do Gemini: {e}")
+        return None
+
+# ----- FUNÇÃO CORRIGIDA -----
+def buscar_dados_nutricionais(item: dict, usda_key: str):
+    alimento_nome = item.get('alimento')
+    quantidade = item.get('quantidade')
+    unidade = item.get('unidade')
+
+    if not all([alimento_nome, quantidade, unidade]):
+         logger.warning(f"Item inválido para busca no USDA: {item}")
+         return None
+
+    logger.info(f"2. Buscando dados de '{alimento_nome}' no USDA...")
+    url = f"https://api.nal.usda.gov/fdc/v1/foods/search?api_key={usda_key}&query={alimento_nome}"
+
+    try: # Bloco try começa aqui
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        if data['foods']:
+            primeiro_alimento = data['foods'][0]
+            valores_base_100g = {}
+            for nut in primeiro_alimento.get('foodNutrients', []):
+                name = nut.get('nutrientName')
+                unit = nut.get('unitName', '').upper()
+                value = nut.get('value', 0)
+
+                if name == 'Energy' and unit == 'KCAL':
+                    valores_base_100g['Calorias (Kcal)'] = value
+                elif name == 'Protein' and unit == 'G':
+                     valores_base_100g['Proteínas (g)'] = value
+                elif name == 'Total lipid (fat)' and unit == 'G':
+                     valores_base_100g['Gorduras (g)'] = value
+                elif name == 'Carbohydrate, by difference' and unit == 'G':
+                     valores_base_100g['Carboidratos (g)'] = value
+
+            logger.info(f"   -> Encontrado: '{primeiro_alimento.get('description')}' (Base 100g)")
+
+            if unidade == 'grama':
+                if quantidade <= 0: return None
+                logger.info(f"   -> Calculando para {quantidade} gramas...")
+                fator = quantidade / 100.0
+                nutrientes_calculados = {k: round(v * fator, 2) for k, v in valores_base_100g.items()}
+                return nutrientes_calculados
+            else:
+                logger.warning(f"   -> Unidade '{unidade}' não suportada. Retornando base 100g.")
+                return valores_base_100g
+        else:
+            logger.warning(f"   -> Alimento '{alimento_nome}' não encontrado no USDA.")
+            return None
+    # ---- Bloco except CORRIGIDO ----
+    except requests.exceptions.RequestException as e: # Captura erros de rede
+         logger.error(f"Erro de rede ao chamar API do USDA: {e}")
+         return None
+    except Exception as e: # Captura outros erros inesperados
+        logger.exception(f"Ocorreu um erro inesperado ao buscar dados no USDA: {e}")
+        return None
+    # -------------------------------
+# ----- FIM DA FUNÇÃO CORRIGIDA -----
+
+# --- FUNÇÃO PARA PEGAR SESSÃO DO BANCO ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# --- 5. MODELOS DE DADOS PARA A API (Pydantic) ---
+class RefeicaoInput(BaseModel):
+    frase_refeicao: str
+    tipo_refeicao: str
+
+class RefeicaoOutput(BaseModel):
+     id: int
+     mensagem: str
+     total_calorias: float = 0
+     total_proteinas: float = 0
+     total_gorduras: float = 0
+     total_carboidratos: float = 0
+
+# --- 6. INICIALIZAÇÃO DO FASTAPI ---
+logger.info("Iniciando FastAPI app...")
+app = FastAPI(title="API de Nutrição com IA")
+logger.info("✅ FastAPI app iniciado.")
+
+# --- 7. ENDPOINTS DA API ---
+
+@app.get("/")
+async def root():
+    logger.info("Endpoint '/' acessado.")
+    return {"message": "API de Nutrição com IA está funcionando!"}
+
+@app.post("/registrar-refeicao/", response_model=RefeicaoOutput)
+async def registrar_refeicao(refeicao_input: RefeicaoInput, db: Session = Depends(get_db)):
+    logger.info(f"Recebido pedido para registrar: {refeicao_input.tipo_refeicao} - '{refeicao_input.frase_refeicao}'")
+
+    # 1. Extrair alimentos com Gemini
+    dados_alimentos = extrair_alimentos_da_frase(refeicao_input.frase_refeicao)
+    if not dados_alimentos:
+        logger.error("Falha ao extrair alimentos com Gemini.")
+        raise HTTPException(status_code=400, detail="Não foi possível processar a descrição da refeição com a IA.")
+
+    # 2. Buscar dados nutricionais e calcular totais
+    total_calorias, total_proteinas, total_gorduras, total_carboidratos = 0, 0, 0, 0
+    itens_processados = 0
+    for item in dados_alimentos:
+        nutrientes = buscar_dados_nutricionais(item, USDA_API_KEY)
+        if nutrientes:
+            itens_processados += 1
+            total_calorias += nutrientes.get('Calorias (Kcal)', 0)
+            total_proteinas += nutrientes.get('Proteínas (g)', 0)
+            total_gorduras += nutrientes.get('Gorduras (g)', 0)
+            total_carboidratos += nutrientes.get('Carboidratos (g)', 0)
+
+    if itens_processados == 0:
+         logger.error("Nenhum item da refeição pôde ser encontrado no USDA.")
+         raise HTTPException(status_code=404, detail="Nenhum dos alimentos descritos foi encontrado no banco de dados nutricional.")
+
+    logger.info(f"Refeição calculada: Cal={total_calorias}, Prot={total_proteinas}, Gord={total_gorduras}, Carb={total_carboidratos}")
+
+    # 3. Salvar no banco de dados
+    try:
+        nova_refeicao_db = RefeicaoRegistrada(
+            data=datetime.utcnow(),
+            tipo_refeicao=refeicao_input.tipo_refeicao,
+            total_calorias=round(total_calorias, 2),
+            total_proteinas=round(total_proteinas, 2),
+            total_gorduras=round(total_gorduras, 2),
+            total_carboidratos=round(total_carboidratos, 2),
+            usuario_id=TEST_USER_ID
+        )
+        db.add(nova_refeicao_db)
+        db.commit()
+        db.refresh(nova_refeicao_db)
+
+        logger.info(f"✅ Refeição salva no banco com ID: {nova_refeicao_db.id}")
+
+        return RefeicaoOutput(
+            id=nova_refeicao_db.id,
+            mensagem="Refeição registrada com sucesso!",
+            total_calorias=nova_refeicao_db.total_calorias,
+            total_proteinas=nova_refeicao_db.total_proteinas,
+            total_gorduras=nova_refeicao_db.total_gorduras,
+            total_carboidratos=nova_refeicao_db.total_carboidratos
+        )
+
+    except Exception as e:
+        logger.exception("Ocorreu um erro ao salvar a refeição no banco de dados.")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro interno ao salvar a refeição.")
+
+# --- (PRÓXIMO PASSO: Adicionar endpoint /resumo-do-dia aqui) ---
