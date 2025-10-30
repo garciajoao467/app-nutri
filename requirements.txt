@@ -7,3 +7,4 @@ requests
 bcrypt
 python-dotenv
 urllib3
+passlib[bcrypt]
