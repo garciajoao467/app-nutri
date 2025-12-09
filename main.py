@@ -28,7 +28,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # P
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logger.info("Script main.py iniciado.")
+logger.info("Script main.py iniciando.")
 load_dotenv()
 logger.info("Tentando carregar secrets do ambiente...")
 
